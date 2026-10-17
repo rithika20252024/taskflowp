@@ -39,6 +39,8 @@ The browser uses the Next.js app for the interface and calls the Express API for
 Requirements: Node.js 22+, npm, and Docker Compose.
 
 ```bash
+git clone https://github.com/rithika20252024/taskflowp
+cd taskflowp
 cp apps/api/.env.example .env
 # Set JWT_SECRET to a random secret with at least 32 characters.
 docker compose up --build
