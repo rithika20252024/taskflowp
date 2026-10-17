@@ -68,13 +68,18 @@ docker compose up --build
 
 Open [http://localhost:3000](http://localhost:3000). The API health endpoint is [http://localhost:4000/health](http://localhost:4000/health). Compose starts PostgreSQL, applies the Prisma migration, then starts the API and web app.
 
-For local development with a host Node process, start only the database with `docker compose up -d db`, install dependencies with `npm install`, set `DATABASE_URL` and `JWT_SECRET` from `apps/api/.env.example`, then run:
+For local development with Node.js on your host, first make sure Docker Desktop is running. From the repository root, install the pinned dependencies, start PostgreSQL, and prepare the database:
 
 ```bash
-npx prisma migrate deploy --config=prisma.config.ts
-npx prisma generate --config=prisma.config.ts
+cp apps/api/.env.example .env
+npm install
+docker compose up -d db
+npm run db:deploy --workspace @taskflow/api
+npm run db:generate --workspace @taskflow/api
 npm run dev
 ```
+
+The API reads `DATABASE_URL` and `JWT_SECRET` from the root `.env` file. Copy `apps/api/.env.example` to `.env` before starting the app and replace `JWT_SECRET` with a random secret of at least 32 characters. Run `npm install` before using Prisma or starting the app; this ensures the project's pinned Prisma CLI and `concurrently` are available. Avoid invoking Prisma through `npx` before installing dependencies, since npm may fetch a different version.
 
 ## API overview
 
@@ -105,11 +110,21 @@ npx prisma generate --config=prisma.config.ts
 npm run build
 ```
 
-API integration tests use the configured PostgreSQL database and clean their tables between cases:
+API integration tests use a separate PostgreSQL database and clean their tables between cases. With Docker Desktop running, create and migrate that database once:
+
+```bash
+docker compose up -d db
+docker compose exec db createdb -U taskflow taskflow_test
+DATABASE_URL='postgresql://taskflow:taskflow@localhost:5432/taskflow_test?schema=public' npm run db:deploy --workspace @taskflow/api
+```
+
+If `createdb` reports that `taskflow_test` already exists, continue. Run the tests with:
 
 ```bash
 DATABASE_URL='postgresql://taskflow:taskflow@localhost:5432/taskflow_test?schema=public' JWT_SECRET='integration-test-secret-at-least-32-characters-long' npm test
 ```
+
+Vitest prints the V8 coverage summary in the terminal and writes detailed reports under `apps/api/coverage/`.
 
 The CI workflow provisions PostgreSQL, applies migrations, builds both apps, runs the integration suite, and collects an API coverage report.
 
@@ -121,4 +136,10 @@ Use claims that match the implementation and the results you measure:
 - Implemented JWT authentication, team membership roles, validated task CRUD, and server-side filtering, sorting, and pagination.
 - Added API integration tests, a GitHub Actions build-and-test workflow, and API coverage reporting.
 
-Vitest/V8 records API coverage. The API also logs per-request duration in milliseconds; run a repeatable request sample against a running app to collect p50, p95, and p99 latency: `TEAM_ID=... TASKFLOW_TOKEN=... npm --workspace @taskflow/api run benchmark`. Use the resulting numbers when writing resume claims.
+Vitest/V8 records API coverage. The API also logs per-request duration in milliseconds. To collect latency percentiles, first start the app, register and log in a user through `/api/auth/register` and `/api/auth/login`, then create a team with `POST /api/teams` using that user's bearer token. Use the returned JWT and team ID for the repeatable sample:
+
+```bash
+TEAM_ID='your-team-id' TASKFLOW_TOKEN='your-jwt' npm --workspace @taskflow/api run benchmark
+```
+
+The benchmark reports median, p95, and p99 response times in milliseconds for 100 requests at concurrency 10 by default. Use the measured values from your own run when writing resume claims; results depend on the machine and environment.
