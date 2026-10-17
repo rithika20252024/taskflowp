@@ -1,0 +1,12 @@
+.git
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/coverage
+legacy
+work
+outputs
+.env
+apps/api/.env
+*.log
