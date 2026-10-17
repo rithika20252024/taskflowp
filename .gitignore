@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.next/
+dist/
+coverage/
+apps/api/src/generated/
+
+target/
+.idea/
+*.iml
+.classpath
+.project

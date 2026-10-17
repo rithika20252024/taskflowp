@@ -1,0 +1,10 @@
+CREATE TYPE "Role" AS ENUM ('OWNER','ADMIN','MEMBER');
+CREATE TYPE "TaskStatus" AS ENUM ('TODO','IN_PROGRESS','DONE');
+CREATE TYPE "TaskPriority" AS ENUM ('LOW','MEDIUM','HIGH');
+CREATE TABLE "User" ("id" TEXT PRIMARY KEY, "email" TEXT NOT NULL UNIQUE, "name" TEXT NOT NULL, "passwordHash" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE "Team" ("id" TEXT PRIMARY KEY, "name" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE "Membership" ("userId" TEXT NOT NULL, "teamId" TEXT NOT NULL, "role" "Role" NOT NULL DEFAULT 'MEMBER', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("userId","teamId"), CONSTRAINT "Membership_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE, CONSTRAINT "Membership_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE CASCADE);
+CREATE TABLE "Task" ("id" TEXT PRIMARY KEY, "teamId" TEXT NOT NULL, "createdById" TEXT NOT NULL, "title" TEXT NOT NULL, "description" TEXT, "status" "TaskStatus" NOT NULL DEFAULT 'TODO', "priority" "TaskPriority" NOT NULL DEFAULT 'MEDIUM', "dueDate" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Task_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE CASCADE);
+CREATE INDEX "Membership_teamId_role_idx" ON "Membership"("teamId","role");
+CREATE INDEX "Task_teamId_status_createdAt_idx" ON "Task"("teamId","status","createdAt");
+CREATE INDEX "Task_teamId_priority_idx" ON "Task"("teamId","priority");

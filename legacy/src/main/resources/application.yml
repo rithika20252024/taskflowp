@@ -1,0 +1,60 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: taskflow
+  profiles:
+    active: dev
+
+  datasource:
+    url: jdbc:h2:mem:taskflowdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driverClassName: org.h2.Driver
+    username: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: taskflow-worker-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+taskflow:
+  rate-limit:
+    capacity: 100
+    refill-tokens-per-second: 10
+  worker:
+    id: worker-local-1
+    concurrency: 4
+  retry:
+    base-delay-seconds: 2
+    max-delay-seconds: 60
+    max-attempts: 3
+  outbox:
+    publisher-interval-ms: 1000
+
+logging:
+  level:
+    com.taskflow: INFO
+    org.springframework.web: INFO

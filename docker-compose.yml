@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+      POSTGRES_DB: taskflow
+    ports: ["5432:5432"]
+    volumes: ["taskflow-db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskflow -d taskflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["npx", "prisma", "migrate", "deploy", "--config=prisma.config.ts"]
+    environment:
+      DATABASE_URL: postgresql://taskflow:taskflow@db:5432/taskflow?schema=public
+    depends_on:
+      db: { condition: service_healthy }
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://taskflow:taskflow@db:5432/taskflow?schema=public
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-this-32-chars}
+      CORS_ORIGIN: http://localhost:3000
+      PORT: 4000
+    ports: ["4000:4000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  taskflow-db:

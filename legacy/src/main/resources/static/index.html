@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaskFlow — Distributed Job Queue & Workflow Scheduler</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+
+  <!-- Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <i class="fa-solid fa-network-wired text-white text-lg"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">TaskFlow</h1>
+          <p class="text-xs text-slate-400 font-mono">Distributed Job Queue &bull; Concurrency &bull; Transactional Outbox</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-3 text-xs">
+        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> Cluster Online
+        </span>
+        <a href="https://github.com/rithika20252024/taskflow" target="_blank" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition flex items-center space-x-1.5">
+          <i class="fa-brands fa-github text-sm"></i>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Operational Metrics Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3" id="metrics-container">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">QUEUED</div>
+        <div class="text-2xl font-bold text-amber-400 mt-1" id="m-queued">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Awaiting worker</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">RUNNING</div>
+        <div class="text-2xl font-bold text-blue-400 mt-1" id="m-running">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Optimistic claimed</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">COMPLETED</div>
+        <div class="text-2xl font-bold text-emerald-400 mt-1" id="m-completed">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Terminal success</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">RETRYING</div>
+        <div class="text-2xl font-bold text-indigo-400 mt-1" id="m-retrying">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Exponential backoff</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">DLQ (DEAD-LETTER)</div>
+        <div class="text-2xl font-bold text-rose-400 mt-1" id="m-dlq">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Retries exhausted</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">AVG DURATION</div>
+        <div class="text-2xl font-bold text-cyan-400 mt-1" id="m-avg">0<span class="text-xs font-normal text-slate-400 ml-1">ms</span></div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Execution time</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+        <div class="text-slate-400 text-xs font-medium">OUTBOX BACKLOG</div>
+        <div class="text-2xl font-bold text-purple-400 mt-1" id="m-outbox">0</div>
+        <div class="text-[10px] text-slate-500 mt-1 font-mono">Dual-write buffer</div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Job Submission & Concurrency Simulator -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Panel: Job Submission & Idempotency Testing (5 Cols) -->
+      <div class="lg:col-span-5 space-y-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <h2 class="text-base font-semibold flex items-center space-x-2">
+              <i class="fa-solid fa-paper-plane text-indigo-400"></i>
+              <span>Submit Asynchronous Job</span>
+            </h2>
+            <span class="text-xs bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20 font-mono">Transactional Outbox</span>
+          </div>
+
+          <form id="job-form" class="mt-4 space-y-3.5">
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Idempotency Key (Header)</label>
+              <div class="flex space-x-2">
+                <input type="text" id="idempotencyKey" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="UUID or unique client token" required />
+                <button type="button" onclick="generateKey()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs text-slate-300 border border-slate-700 transition" title="Generate New UUID">
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                </button>
+              </div>
+              <p class="text-[10px] text-slate-500 mt-1">Guarantees zero duplicate job creations across network retries.</p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Job Type</label>
+                <select id="jobType" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                  <option value="EMAIL">EMAIL (Notification)</option>
+                  <option value="DATA_SYNC">DATA_SYNC (ETL)</option>
+                  <option value="REPORT_GEN">REPORT_GEN (PDF Export)</option>
+                  <option value="PAYROLL_EXPORT">PAYROLL_EXPORT</option>
+                  <option value="IMAGE_TRANSCODE">IMAGE_TRANSCODE</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Priority (1-10)</label>
+                <input type="number" id="priority" value="5" min="1" max="10" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500" />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Payload JSON</label>
+              <textarea id="payload" rows="3" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500">{ "recipient": "user@google.com", "action": "send_welcome" }</textarea>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="space-y-2 pt-2">
+              <button type="submit" class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white rounded-lg text-xs font-medium transition shadow-lg shadow-indigo-600/30 flex items-center justify-center space-x-2">
+                <i class="fa-solid fa-play"></i>
+                <span>Submit Job (POST /api/v1/jobs)</span>
+              </button>
+
+              <div class="grid grid-cols-2 gap-2">
+                <button type="button" onclick="testDoubleSubmit()" class="py-2 px-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-[11px] font-medium transition flex items-center justify-center space-x-1">
+                  <i class="fa-solid fa-clone"></i>
+                  <span>Test Double Submit</span>
+                </button>
+                <button type="button" onclick="injectFailureJob()" class="py-2 px-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-lg text-[11px] font-medium transition flex items-center justify-center space-x-1">
+                  <i class="fa-solid fa-bug"></i>
+                  <span>Inject Failure &rarr; DLQ</span>
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <!-- Result Feedback Box -->
+          <div id="submit-feedback" class="mt-4 hidden p-3 rounded-lg border text-xs font-mono"></div>
+        </div>
+
+        <!-- Concurrency Stress Test Box -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <h2 class="text-base font-semibold flex items-center space-x-2">
+              <i class="fa-solid fa-bolt text-amber-400"></i>
+              <span>Worker Concurrency Race Simulator</span>
+            </h2>
+            <span class="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20 font-mono">@Version Lock</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-3 leading-relaxed">
+            Spawns <strong>20 concurrent worker threads</strong> hammering the exact same queued job simultaneously via a <code>CountDownLatch</code>.
+            Proves that <strong>exactly 1 worker wins</strong> the optimistic lock and the other 19 receive optimistic lock conflicts.
+          </p>
+
+          <div class="mt-4 flex space-x-2">
+            <input type="text" id="raceJobId" placeholder="Enter Job UUID or leave empty for auto" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500" />
+            <button onclick="triggerRaceCondition()" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold transition shadow-lg shadow-amber-600/20 flex items-center space-x-1.5">
+              <i class="fa-solid fa-flag-checkered"></i>
+              <span>Launch 20 Workers</span>
+            </button>
+          </div>
+
+          <!-- Race Result Output -->
+          <div id="race-results" class="mt-4 hidden space-y-2">
+            <div class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs space-y-1">
+              <div class="flex justify-between text-slate-300 font-mono">
+                <span>Successful Claims (Winner):</span>
+                <span class="text-emerald-400 font-bold" id="race-winners">0</span>
+              </div>
+              <div class="flex justify-between text-slate-300 font-mono">
+                <span>Optimistic Lock Conflicts / Rejections:</span>
+                <span class="text-rose-400 font-bold" id="race-collisions">0</span>
+              </div>
+              <div class="flex justify-between text-slate-300 font-mono">
+                <span>Winning Worker ID:</span>
+                <span class="text-amber-400 font-bold" id="race-winner-id">-</span>
+              </div>
+            </div>
+            <div id="race-log" class="max-h-36 overflow-y-auto bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] font-mono space-y-1 text-slate-400"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Live Jobs Stream & Execution Audits (7 Cols) -->
+      <div class="lg:col-span-7 space-y-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <h2 class="text-base font-semibold flex items-center space-x-2">
+              <i class="fa-solid fa-list-check text-indigo-400"></i>
+              <span>Live Job Queue & Execution Stream</span>
+            </h2>
+            <div class="flex items-center space-x-2">
+              <button onclick="fetchJobs()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition">
+                <i class="fa-solid fa-rotate-right mr-1"></i> Refresh
+              </button>
+            </div>
+          </div>
+
+          <!-- Jobs Table -->
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950/70 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                <tr>
+                  <th class="py-2.5 px-3">Job ID / Type</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-2">Pri</th>
+                  <th class="py-2.5 px-3">Worker / Retry</th>
+                  <th class="py-2.5 px-3">Created</th>
+                  <th class="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="jobs-table-body" class="divide-y divide-slate-800/60 font-mono">
+                <tr>
+                  <td colspan="6" class="py-6 text-center text-slate-500">Loading jobs...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Attempt Audit Logs -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <h2 class="text-base font-semibold flex items-center space-x-2">
+              <i class="fa-solid fa-clock-rotate-left text-violet-400"></i>
+              <span>Execution History & Attempt Audit Trail</span>
+            </h2>
+            <span class="text-xs text-slate-500 font-mono">Recent 50 Attempts</span>
+          </div>
+
+          <div class="mt-4 max-h-64 overflow-y-auto space-y-2 pr-1" id="attempts-container">
+            <div class="text-xs text-slate-500 text-center py-4">No recent worker attempts recorded</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Technical Architecture & SDE Discussion Guide -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <h3 class="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center space-x-2">
+        <i class="fa-solid fa-graduation-cap text-indigo-400"></i>
+        <span>Engineering Architecture & Big-Tech Interview Talking Points</span>
+      </h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-400">
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+          <h4 class="font-semibold text-slate-200 flex items-center space-x-1.5">
+            <span class="text-indigo-400 font-bold">1.</span> <span>Idempotency Guarantee</span>
+          </h4>
+          <p class="leading-relaxed">
+            Unique index on <code>idempotency_key</code> at database level + application caching ensures replayed HTTP requests (double-clicks, network reconnects) return cached responses instantly without executing the task twice.
+          </p>
+        </div>
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+          <h4 class="font-semibold text-slate-200 flex items-center space-x-1.5">
+            <span class="text-amber-400 font-bold">2.</span> <span>Optimistic Locking (@Version)</span>
+          </h4>
+          <p class="leading-relaxed">
+            Eliminates distributed lock manager (Zookeeper/Redis Redlock) overhead. When 20 workers attempt to claim the same queued job, only the first successfully commits version 0 &rarr; 1; all others detect version mismatch and gracefully reject.
+          </p>
+        </div>
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+          <h4 class="font-semibold text-slate-200 flex items-center space-x-1.5">
+            <span class="text-purple-400 font-bold">3.</span> <span>Transactional Outbox Pattern</span>
+          </h4>
+          <p class="leading-relaxed">
+            Guarantees dual-write consistency: inserts the Job record and OutboxEvent atomically inside the same relational transaction, completely preventing the scenario where DB commits but Kafka event publish fails.
+          </p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Job Attempt Modal -->
+  <div id="attempt-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <h3 class="font-semibold text-sm text-slate-200" id="modal-title">Job Execution Attempts</h3>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-base">&times;</button>
+      </div>
+      <div id="modal-content" class="max-h-80 overflow-y-auto space-y-2 text-xs font-mono"></div>
+    </div>
+  </div>
+
+  <script>
+    function generateUUID() {
+      return 'tf-' + 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    function generateKey() {
+      document.getElementById('idempotencyKey').value = generateUUID();
+    }
+
+    generateKey();
+
+    async function fetchMetrics() {
+      try {
+        const res = await fetch('/api/v1/metrics');
+        if (!res.ok) return;
+        const m = await res.json();
+        document.getElementById('m-queued').textContent = m.queuedJobs;
+        document.getElementById('m-running').textContent = m.runningJobs;
+        document.getElementById('m-completed').textContent = m.completedJobs;
+        document.getElementById('m-retrying').textContent = m.retryingJobs;
+        document.getElementById('m-dlq').textContent = m.dlqJobs;
+        document.getElementById('m-avg').innerHTML = `${m.averageProcessingTimeMs}<span class="text-xs font-normal text-slate-400 ml-1">ms</span>`;
+        document.getElementById('m-outbox').textContent = m.unpublishedOutboxEvents;
+      } catch (e) {
+        console.warn('Metrics error:', e);
+      }
+    }
+
+    function statusBadge(status) {
+      const badges = {
+        'QUEUED': 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+        'RUNNING': 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse',
+        'COMPLETED': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+        'FAILED': 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+        'RETRYING': 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
+        'CANCELLED': 'bg-slate-700/30 text-slate-400 border-slate-700',
+        'DLQ': 'bg-red-950 text-red-400 border-red-700'
+      };
+      const cls = badges[status] || 'bg-slate-800 text-slate-300';
+      return `<span class="px-2 py-0.5 rounded border text-[10px] font-semibold ${cls}">${status}</span>`;
+    }
+
+    async function fetchJobs() {
+      try {
+        const res = await fetch('/api/v1/jobs');
+        if (!res.ok) return;
+        const jobs = await res.json();
+        const tbody = document.getElementById('jobs-table-body');
+        if (jobs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-slate-500 font-sans">No jobs submitted yet. Use the form on the left to submit a job!</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = jobs.map(j => {
+          const shortId = j.jobId.substring(0, 8);
+          const time = new Date(j.createdAt).toLocaleTimeString();
+          const worker = j.workerId ? j.workerId.replace('worker-', 'w-') : '-';
+          return `
+            <tr class="hover:bg-slate-900/50 transition">
+              <td class="py-2.5 px-3">
+                <div class="font-bold text-slate-200">${shortId}...</div>
+                <div class="text-[10px] text-slate-500">${j.type}</div>
+              </td>
+              <td class="py-2.5 px-3">${statusBadge(j.status)}</td>
+              <td class="py-2.5 px-2 text-slate-400 font-semibold">${j.priority}</td>
+              <td class="py-2.5 px-3">
+                <div class="text-[11px] text-slate-300 truncate max-w-[120px]">${worker}</div>
+                <div class="text-[10px] text-slate-500">Attempt: ${j.retryCount}/${j.maxRetries}</div>
+              </td>
+              <td class="py-2.5 px-3 text-slate-400 text-[11px]">${time}</td>
+              <td class="py-2.5 px-3 text-right space-x-1">
+                <button onclick="viewAttempts('${j.jobId}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-[10px] text-slate-300 transition" title="View Attempts">
+                  <i class="fa-solid fa-clock-rotate-left"></i>
+                </button>
+                ${j.status === 'QUEUED' ? `
+                  <button onclick="raceSpecificJob('${j.jobId}')" class="px-2 py-1 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 rounded text-[10px] transition" title="Simulate 20-Worker Race">
+                    <i class="fa-solid fa-bolt"></i>
+                  </button>
+                  <button onclick="cancelJob('${j.jobId}')" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 rounded text-[10px] transition" title="Cancel Job">
+                    <i class="fa-solid fa-ban"></i>
+                  </button>
+                ` : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (e) {
+        console.warn('Jobs fetch error:', e);
+      }
+    }
+
+    async function fetchAttempts() {
+      try {
+        const res = await fetch('/api/v1/jobs/attempts');
+        if (!res.ok) return;
+        const attempts = await res.json();
+        const container = document.getElementById('attempts-container');
+        if (attempts.length === 0) {
+          container.innerHTML = '<div class="text-xs text-slate-500 text-center py-4">No recent worker attempts recorded</div>';
+          return;
+        }
+
+        container.innerHTML = attempts.map(a => {
+          const shortJob = a.jobId.substring(0, 8);
+          const dur = a.durationMs != null ? a.durationMs + 'ms' : 'active';
+          const isFail = a.status === 'FAILED';
+          return `
+            <div class="p-2.5 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+              <div class="space-y-0.5">
+                <div class="flex items-center space-x-2">
+                  <span class="font-bold text-slate-300">Job: ${shortJob}...</span>
+                  ${statusBadge(a.status)}
+                </div>
+                <div class="text-[10px] text-slate-500">Worker: ${a.workerId} &bull; Duration: ${dur}</div>
+                ${a.errorMessage ? `<div class="text-[10px] text-rose-400 font-mono">Error: ${a.errorMessage}</div>` : ''}
+              </div>
+              <div class="text-[10px] text-slate-500 font-mono">${new Date(a.startedAt).toLocaleTimeString()}</div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        console.warn('Attempts fetch error:', e);
+      }
+    }
+
+    // Submit Job Form
+    document.getElementById('job-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const key = document.getElementById('idempotencyKey').value;
+      const type = document.getElementById('jobType').value;
+      const priority = parseInt(document.getElementById('priority').value) || 5;
+      const payload = document.getElementById('payload').value;
+
+      const fb = document.getElementById('submit-feedback');
+      fb.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/30', 'bg-amber-500/10', 'text-amber-400', 'border-amber-500/30');
+
+      try {
+        const res = await fetch('/api/v1/jobs', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': key
+          },
+          body: JSON.stringify({ type, payload, priority, maxRetries: 3 })
+        });
+        const data = await res.json();
+        
+        if (data.isCachedIdempotentResponse) {
+          fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-amber-500/10 text-amber-300 border-amber-500/30';
+          fb.innerHTML = `⚠️ <strong>IDEMPOTENCY HIT (Zero Duplicate Job):</strong><br>Existing job returned: ${data.jobId} (Status: ${data.status})`;
+        } else {
+          fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+          fb.innerHTML = `✅ <strong>JOB QUEUED (Outbox Saved):</strong><br>Job ID: ${data.jobId} &bull; Idempotency: ${data.idempotencyKey.substring(0, 16)}...`;
+        }
+        fb.classList.remove('hidden');
+        generateKey();
+        fetchJobs();
+        fetchMetrics();
+      } catch (err) {
+        fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-rose-500/10 text-rose-400 border-rose-500/30';
+        fb.textContent = 'Submission error: ' + err.message;
+        fb.classList.remove('hidden');
+      }
+    });
+
+    // Test Double Submit
+    async function testDoubleSubmit() {
+      const fixedKey = 'duplicate-test-' + Date.now();
+      const fb = document.getElementById('submit-feedback');
+      fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-indigo-500/10 text-indigo-300 border-indigo-500/30';
+      fb.innerHTML = `🚀 Sending 2 concurrent POST requests with identical Idempotency-Key:<br><code>${fixedKey}</code>...`;
+      fb.classList.remove('hidden');
+
+      const body = JSON.stringify({
+        type: 'PAYROLL_EXPORT',
+        payload: '{"batch": "Q3-Payroll", "amount": 250000}',
+        priority: 8
+      });
+
+      const p1 = fetch('/api/v1/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': fixedKey }, body });
+      const p2 = fetch('/api/v1/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': fixedKey }, body });
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
+
+      const sameJob = d1.jobId === d2.jobId;
+      const cached = d1.isCachedIdempotentResponse || d2.isCachedIdempotentResponse;
+
+      fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
+      fb.innerHTML = `
+        🎉 <strong>IDEMPOTENCY PROOF VERIFIED:</strong><br>
+        Request 1: HTTP ${r1.status} &bull; Job ID: ${d1.jobId} (Cached: ${d1.isCachedIdempotentResponse})<br>
+        Request 2: HTTP ${r2.status} &bull; Job ID: ${d2.jobId} (Cached: ${d2.isCachedIdempotentResponse})<br>
+        <strong>Match:</strong> ${sameJob ? '✅ Exactly same Job ID across both requests! Zero double processing.' : '❌ Mismatch'}
+      `;
+      fetchJobs();
+      fetchMetrics();
+    }
+
+    // Inject Failure & DLQ Demo
+    async function injectFailureJob() {
+      const key = generateUUID();
+      const res = await fetch('/api/v1/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({
+          type: 'PAYMENT_GATEWAY_SYNC',
+          payload: JSON.stringify({ simulate_failure: true, failure_reason: "Downstream Gateway Timeout (HTTP 504)" }),
+          priority: 9,
+          maxRetries: 3
+        })
+      });
+      const data = await res.json();
+      const fb = document.getElementById('submit-feedback');
+      fb.className = 'mt-4 p-3 rounded-lg border text-xs font-mono bg-rose-500/10 text-rose-300 border-rose-500/30';
+      fb.innerHTML = `⚠️ <strong>Failure Injected Job Created:</strong><br>Job ID: ${data.jobId}<br>Watch status transition: QUEUED &rarr; RUNNING &rarr; RETRYING (2s backoff) &rarr; RETRYING (4s backoff) &rarr; DLQ`;
+      fb.classList.remove('hidden');
+      fetchJobs();
+      fetchMetrics();
+    }
+
+    // Worker Claim Race Simulator
+    async function triggerRaceCondition() {
+      let jobId = document.getElementById('raceJobId').value.trim();
+      if (!jobId) {
+        // Create an un-claimed job explicitly for this race
+        const createRes = await fetch('/api/v1/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'race-setup-' + Date.now() },
+          body: JSON.stringify({ type: 'RACE_TEST', payload: '{"stress": "20-workers"}', priority: 10 })
+        });
+        const newJob = await createRes.json();
+        jobId = newJob.jobId;
+        document.getElementById('raceJobId').value = jobId;
+      }
+
+      const resBox = document.getElementById('race-results');
+      resBox.classList.remove('hidden');
+      document.getElementById('race-winners').textContent = 'Running...';
+      document.getElementById('race-collisions').textContent = 'Running...';
+      document.getElementById('race-winner-id').textContent = 'Competing...';
+      document.getElementById('race-log').innerHTML = 'Spawning 20 worker threads via CountDownLatch...';
+
+      const res = await fetch(`/api/v1/jobs/${jobId}/simulate-race?workerCount=20`, { method: 'POST' });
+      const data = await res.json();
+
+      document.getElementById('race-winners').textContent = data.successfulClaims;
+      document.getElementById('race-collisions').textContent = data.rejectedCollisions;
+      document.getElementById('race-winner-id').textContent = data.winnerWorkerId;
+      document.getElementById('race-log').innerHTML = data.eventLog.map(l => `<div>${l}</div>`).join('');
+
+      fetchJobs();
+      fetchMetrics();
+      fetchAttempts();
+    }
+
+    function raceSpecificJob(jobId) {
+      document.getElementById('raceJobId').value = jobId;
+      triggerRaceCondition();
+    }
+
+    async function cancelJob(jobId) {
+      if (!confirm('Are you sure you want to cancel this job?')) return;
+      await fetch(`/api/v1/jobs/${jobId}/cancel`, { method: 'POST' });
+      fetchJobs();
+      fetchMetrics();
+    }
+
+    async function viewAttempts(jobId) {
+      const res = await fetch(`/api/v1/jobs/${jobId}/attempts`);
+      const attempts = await res.json();
+      document.getElementById('modal-title').textContent = `Attempts for Job: ${jobId.substring(0, 13)}...`;
+      const content = document.getElementById('modal-content');
+      if (attempts.length === 0) {
+        content.innerHTML = '<div class="text-slate-500 py-3 text-center">No attempts registered yet for this job.</div>';
+      } else {
+        content.innerHTML = attempts.map((a, idx) => `
+          <div class="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-1">
+            <div class="flex justify-between items-center">
+              <span class="font-bold text-slate-300">Attempt #${attempts.length - idx}</span>
+              ${statusBadge(a.status)}
+            </div>
+            <div class="text-[10px] text-slate-500">Worker: ${a.workerId}</div>
+            <div class="text-[10px] text-slate-500">Started: ${new Date(a.startedAt).toLocaleString()}</div>
+            ${a.completedAt ? `<div class="text-[10px] text-slate-500">Completed: ${new Date(a.completedAt).toLocaleString()} (${a.durationMs}ms)</div>` : ''}
+            ${a.errorMessage ? `<div class="text-[11px] text-rose-400 font-mono mt-1">Error: ${a.errorMessage}</div>` : ''}
+          </div>
+        `).join('');
+      }
+      document.getElementById('attempt-modal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('attempt-modal').classList.add('hidden');
+    }
+
+    // Auto refresh poll loop
+    setInterval(() => {
+      fetchMetrics();
+      fetchJobs();
+      fetchAttempts();
+    }, 2000);
+
+    fetchMetrics();
+    fetchJobs();
+    fetchAttempts();
+  </script>
+</body>
+</html>

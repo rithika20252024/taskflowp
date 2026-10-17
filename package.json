@@ -1,0 +1,18 @@
+{
+  "name": "taskflow-pro",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm --workspace @taskflow/api run dev",
+    "dev:web": "npm --workspace @taskflow/web run dev",
+    "build": "npm run build --workspace @taskflow/api && npm run build --workspace @taskflow/web",
+    "test": "npm test --workspace @taskflow/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
