@@ -34,6 +34,28 @@ flowchart LR
 
 The browser uses the Next.js app for the interface and calls the Express API for authenticated team and task operations. The API checks JWTs and team membership, validates inputs, then reads and writes PostgreSQL through Prisma. Docker Compose runs the web app, API, database, and migration step; GitHub Actions builds both apps and runs the API integration suite against PostgreSQL.
 
+## Project structure
+
+```text
+taskflowp/
+├── apps/
+│   ├── api/
+│   │   ├── prisma/          # Data model and PostgreSQL migrations
+│   │   ├── scripts/         # API latency benchmark
+│   │   ├── src/             # Express app and server entry point
+│   │   └── test/            # API integration tests
+│   └── web/
+│       ├── app/             # Next.js routes and interface styles
+│       └── lib/             # API client helpers
+├── legacy/                  # Original Spring Boot job-queue project
+├── .github/workflows/       # CI build and test workflow
+├── Dockerfile.api
+├── Dockerfile.web
+├── docker-compose.yml
+├── package.json             # npm workspaces and shared commands
+└── prisma.config.ts
+```
+
 ## Run locally
 
 Requirements: Node.js 22+, npm, and Docker Compose.
