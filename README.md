@@ -1,6 +1,6 @@
-# TaskFlow Pro
+# TaskFlow
 
-TaskFlow Pro is a team task-management app built with a Next.js interface, an Express REST API, PostgreSQL, Prisma, and Docker Compose. Teams can share tasks, assign workflow states and priorities, and filter and page through work. Authentication uses signed JWTs; team membership roles control access.
+TaskFlow  is a team task-management app built with a Next.js interface, an Express REST API, PostgreSQL, Prisma, and Docker Compose. Teams can share tasks, assign workflow states and priorities, and filter and page through work. Authentication uses signed JWTs; team membership roles control access.
 
 ## Stack
 
