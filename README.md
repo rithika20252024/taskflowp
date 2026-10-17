@@ -130,18 +130,5 @@ Vitest prints the V8 coverage summary in the terminal and writes detailed report
 
 The CI workflow provisions PostgreSQL, applies migrations, builds both apps, runs the integration suite, and collects an API coverage report.
 
-## Resume-ready summary
 
-Use claims that match the implementation and the results you measure:
 
-- Built a full-stack team task-management app with a Next.js interface, Express REST API, PostgreSQL, and Prisma.
-- Implemented JWT authentication, team membership roles, validated task CRUD, and server-side filtering, sorting, and pagination.
-- Added API integration tests, a GitHub Actions build-and-test workflow, and API coverage reporting.
-
-Vitest/V8 records API coverage. The API also logs per-request duration in milliseconds. To collect latency percentiles, first start the app, register and log in a user through `/api/auth/register` and `/api/auth/login`, then create a team with `POST /api/teams` using that user's bearer token. Use the returned JWT and team ID for the repeatable sample:
-
-```bash
-TEAM_ID='your-team-id' TASKFLOW_TOKEN='your-jwt' npm --workspace @taskflow/api run benchmark
-```
-
-The benchmark reports median, p95, and p99 response times in milliseconds for 100 requests at concurrency 10 by default. Use the measured values from your own run when writing resume claims; results depend on the machine and environment.
