@@ -9,6 +9,31 @@ TaskFlow Pro is a team task-management app built with a Next.js interface, an Ex
 - **Data:** PostgreSQL and Prisma ORM
 - **Delivery:** Docker Compose and GitHub Actions
 
+## Architecture
+
+```mermaid
+flowchart LR
+    U[Team member's browser]
+    W[Next.js web app<br/>React UI]
+    A[Express REST API<br/>JWT auth · Zod validation · team roles]
+    P[Prisma ORM]
+    D[(PostgreSQL<br/>users · teams · memberships · tasks)]
+    C[Docker Compose]
+    CI[GitHub Actions<br/>build · integration tests · coverage]
+
+    U -->|loads interface| W
+    U -->|HTTPS / JSON + bearer token| A
+    A --> P
+    P --> D
+    C -. runs .-> W
+    C -. runs .-> A
+    C -. runs .-> D
+    CI -. verifies .-> W
+    CI -. verifies .-> A
+```
+
+The browser uses the Next.js app for the interface and calls the Express API for authenticated team and task operations. The API checks JWTs and team membership, validates inputs, then reads and writes PostgreSQL through Prisma. Docker Compose runs the web app, API, database, and migration step; GitHub Actions builds both apps and runs the API integration suite against PostgreSQL.
+
 ## Run locally
 
 Requirements: Node.js 22+, npm, and Docker Compose.
