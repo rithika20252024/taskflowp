@@ -29,6 +29,9 @@ services:
       DATABASE_URL: postgresql://taskflow:taskflow@db:5432/taskflow?schema=public
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-this-32-chars}
       CORS_ORIGIN: http://localhost:3000
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      APP_URL: ${APP_URL:-http://localhost:3000}
       PORT: 4000
     ports: ["4000:4000"]
     depends_on:

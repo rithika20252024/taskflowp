@@ -7,15 +7,22 @@ import jwt from 'jsonwebtoken';
 import { Prisma, PrismaClient, Role, TaskPriority, TaskStatus } from './generated/prisma/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { z, ZodError } from 'zod';
+import Stripe from 'stripe';
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://taskflow:taskflow@localhost:5432/taskflow?schema=public';
 export const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
 const app = express();
+class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
+const appUrl = (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+let stripeClient: Stripe | undefined;
+function getStripe() {
+  if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) throw new HttpError(503, 'Payments require a Stripe test-mode secret key');
+  return stripeClient ??= new Stripe(process.env.STRIPE_SECRET_KEY);
+}
 const secret = process.env.JWT_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'development-only-change-this-secret-32-chars');
 if (secret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000' }));
-app.use(express.json({ limit: '1mb' }));
 app.use((_req, res, next) => {
   const startedAt = process.hrtime.bigint();
   res.on('finish', () => {
@@ -24,10 +31,44 @@ app.use((_req, res, next) => {
   });
   next();
 });
+// Stripe signs the exact raw bytes. This route must be registered before JSON parsing.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '256kb' }), wrap(async (req, res) => {
+  const signature = req.header('stripe-signature');
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) { res.status(503).json({ error: 'Webhook processing requires a Stripe test-mode secret key' }); return; }
+  if (!webhookSecret) { res.status(503).json({ error: 'Webhook processing is not configured' }); return; }
+  if (!signature) { res.status(400).json({ error: 'Webhook signature is missing' }); return; }
+  let event: Stripe.Event;
+  try { event = getStripe().webhooks.constructEvent(req.body, signature, webhookSecret); }
+  catch { res.status(400).json({ error: 'Invalid webhook signature' }); return; }
+  const obj = event.data.object as Stripe.Checkout.Session;
+  const orderId = obj.client_reference_id ?? obj.metadata?.orderId;
+  try {
+    await prisma.$transaction(async tx => {
+      if (orderId && event.type.startsWith('checkout.session.')) {
+        const paymentIntentId = typeof obj.payment_intent === 'string' ? obj.payment_intent : obj.payment_intent?.id;
+        if (event.type === 'checkout.session.completed' && obj.payment_status === 'paid' || event.type === 'checkout.session.async_payment_succeeded') {
+          await tx.paymentOrder.updateMany({ where: { id: orderId }, data: { status: 'PAID', stripePaymentIntentId: paymentIntentId ?? undefined } });
+        } else if (event.type === 'checkout.session.async_payment_failed') {
+          await tx.paymentOrder.updateMany({ where: { id: orderId, status: 'PENDING' }, data: { status: 'FAILED' } });
+        } else if (event.type === 'checkout.session.expired') {
+          await tx.paymentOrder.updateMany({ where: { id: orderId, status: 'PENDING' }, data: { status: 'EXPIRED' } });
+        }
+      }
+      await tx.stripeEvent.create({ data: { id: event.id, type: event.type } });
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') { res.json({ received: true, duplicate: true }); return; }
+    throw error;
+  }
+  res.json({ received: true });
+}));
+app.use(express.json({ limit: '1mb' }));
 
 type AuthRequest = Request & { userId?: string };
-const wrap = (fn: (req: AuthRequest, res: Response, next: NextFunction) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthRequest, res, next)).catch(next);
+function wrap(fn: (req: AuthRequest, res: Response, next: NextFunction) => Promise<unknown>) {
+  return (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthRequest, res, next)).catch(next);
+}
 const auth = (req: AuthRequest, res: Response, next: NextFunction) => {
   const token = req.header('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
@@ -60,6 +101,49 @@ app.get('/api/auth/me', auth, wrap(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { id: true, email: true, name: true } });
   if (!user) return res.status(401).json({ error: 'Account not found' });
   res.json({ user });
+}));
+
+const paymentPackages = {
+  starter: { name: 'TaskFlow Starter', amount: 900, currency: 'usd' },
+  team: { name: 'TaskFlow Team', amount: 2900, currency: 'usd' }
+} as const;
+app.post('/api/payments/checkout', auth, wrap(async (req, res) => {
+  const { package: packageName } = z.object({ package: z.enum(['starter', 'team']) }).parse(req.body);
+  const idempotencyKey = req.header('idempotency-key');
+  if (!idempotencyKey || idempotencyKey.length > 200) { res.status(400).json({ error: 'A valid Idempotency-Key header is required' }); return; }
+  const product = paymentPackages[packageName];
+  let order = await prisma.paymentOrder.findUnique({ where: { userId_idempotencyKey: { userId: req.userId!, idempotencyKey } } });
+  if (!order) {
+    try { order = await prisma.paymentOrder.create({ data: { userId: req.userId!, package: packageName, amount: product.amount, currency: product.currency, idempotencyKey } }); }
+    catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error;
+      order = await prisma.paymentOrder.findUniqueOrThrow({ where: { userId_idempotencyKey: { userId: req.userId!, idempotencyKey } } });
+    }
+  }
+  if (order.package !== packageName) { res.status(409).json({ error: 'Idempotency key was already used for a different package' }); return; }
+  if (order.status !== 'PENDING') { res.status(409).json({ error: 'This payment attempt is already complete', order }); return; }
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, select: { email: true } });
+  const stripe = getStripe();
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    customer_email: user.email,
+    client_reference_id: order.id,
+    metadata: { orderId: order.id, package: packageName },
+    line_items: [{ quantity: 1, price_data: { currency: order.currency, unit_amount: order.amount, product_data: { name: product.name } } }],
+    success_url: `${appUrl}/?payment=success&order_id=${order.id}`,
+    cancel_url: `${appUrl}/?payment=cancelled&order_id=${order.id}`
+  }, { idempotencyKey: `taskflow-order-${order.id}` });
+  order = await prisma.paymentOrder.update({ where: { id: order.id }, data: { stripeCheckoutSessionId: session.id } });
+  res.status(201).json({ order: { id: order.id, status: order.status, amount: order.amount, currency: order.currency, package: order.package }, checkoutUrl: session.url });
+}));
+app.get('/api/payments', auth, wrap(async (req, res) => {
+  const orders = await prisma.paymentOrder.findMany({ where: { userId: req.userId }, orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, package: true, amount: true, currency: true, status: true, createdAt: true, updatedAt: true } });
+  res.json({ orders });
+}));
+app.get('/api/payments/:orderId', auth, wrap(async (req, res) => {
+  const order = await prisma.paymentOrder.findFirst({ where: { id: idParam.parse(routeParam(req.params.orderId)), userId: req.userId }, select: { id: true, package: true, amount: true, currency: true, status: true, createdAt: true, updatedAt: true } });
+  if (!order) { res.status(404).json({ error: 'Payment not found' }); return; }
+  res.json({ order });
 }));
 
 app.post('/api/teams', auth, wrap(async (req, res) => {
@@ -132,9 +216,10 @@ app.delete('/api/teams/:teamId/tasks/:taskId', auth, wrap(async (req, res) => {
 }));
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
   if (err instanceof ZodError) return res.status(400).json({ error: 'Validation failed', details: err.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
   if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return res.status(409).json({ error: 'A record with that value already exists' });
-  console.error(err);
+  console.error(JSON.stringify({ event: 'request_error', errorType: err instanceof Error ? err.name : 'UnknownError' }));
   res.status(500).json({ error: 'Internal server error' });
 });
 export default app;
