@@ -4,7 +4,7 @@
     "api": {
       "root": "apps/api",
       "framework": "express",
-      "entrypoint": "src/app.ts",
+      "entrypoint": "src/app.mts",
       "installCommand": "cd ../.. && npm ci",
       "buildCommand": "npm run db:generate && npm run build"
     },
