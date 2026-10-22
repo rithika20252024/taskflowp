@@ -1,6 +1,7 @@
 {
   "name": "taskflow-pro",
   "private": true,
+  "type": "module",
   "workspaces": [
     "apps/api",
     "apps/web"
