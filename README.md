@@ -1,104 +1,151 @@
-# TaskFlow Pro — Payment Workflow Demo
+# TaskFlow Pro
 
-TaskFlow Pro is a team task-management app with an end-to-end Stripe Checkout workflow. It uses Stripe-hosted checkout for fixed-price one-time purchases, stores order state in PostgreSQL, and treats verified webhooks as the source of truth for payment completion. The API accepts Stripe test and live secret keys; live payments stay disabled until live credentials and a webhook signing secret are configured.
+**A shared workspace for teams to organize tasks and track progress.** TaskFlow Pro is a full-stack web application: people create an account, make a team workspace, add tasks, and update each task as work moves forward. It also includes a Stripe Checkout demonstration for fixed-price, one-time purchases.
 
-## Stack
+| | |
+|---|---|
+| **Live application** | [Open TaskFlow Pro](https://taskflowp-ni3fcwsmf-rithika20252024s-projects.vercel.app/) |
+| **Source code** | [github.com/rithika20252024/taskflowp](https://github.com/rithika20252024/taskflowp) |
 
-- **Web:** Next.js, React, TypeScript
-- **API:** Node.js, Express, TypeScript, Zod validation, JWT authentication, Stripe Node SDK
-- **Payments:** Stripe Checkout Sessions, signed webhooks, idempotent order creation and event processing
-- **Data:** PostgreSQL and Prisma ORM; amounts are integer minor units
-- **Delivery:** Docker Compose and GitHub Actions
+> The live site opens on a sign-in page. Create an account there to enter the app. The team and task features need a database; checkout additionally needs Stripe credentials and a configured webhook.
 
-## Architecture
+## Contents
+
+- [What can I do with TaskFlow Pro?](#what-can-i-do-with-taskflow-pro)
+- [A quick tour](#a-quick-tour)
+- [How the pieces fit together](#how-the-pieces-fit-together)
+- [Technology used](#technology-used)
+- [Run the project on your computer](#run-the-project-on-your-computer)
+- [Environment settings](#environment-settings)
+- [Try the Stripe test checkout](#try-the-stripe-test-checkout)
+- [API guide](#api-guide)
+- [Deploy to Vercel](#deploy-to-vercel)
+- [Build and test](#build-and-test)
+- [Project folder guide](#project-folder-guide)
+- [Troubleshooting](#troubleshooting)
+- [Security notes and current scope](#security-notes-and-current-scope)
+- [Glossary](#glossary)
+- [License](#license)
+
+## What can I do with TaskFlow Pro?
+
+TaskFlow Pro gives a small team one place to see its work. A user can:
+
+- Create an account or sign in with an email address and password.
+- Create a team workspace. The person who creates it becomes its owner.
+- Add tasks to a team and see the team’s task list.
+- Filter tasks by status: **To do**, **In progress**, or **Done**.
+- Change a task’s status as work progresses.
+- View a task’s priority and optional description when provided by the API.
+- Open a Stripe-hosted checkout for one of the fixed-price examples and view recent order status.
+
+Team access is tied to membership. A user must belong to a team to work with that team’s tasks. Owners and admins can add registered users to their team through the API.
+
+## A quick tour
+
+1. Open the [live app](https://taskflowp-ni3fcwsmf-rithika20252024s-projects.vercel.app/).
+2. Choose **Create an account**, enter an email and password, and submit the form. New passwords must be at least 10 characters.
+3. In the workspace, choose **New team** and give the workspace a name.
+4. Type a task into **Add a task to the list…**, then choose **Add task**.
+5. Use the status menu on the task to move it between To do, In progress, and Done. Use the filter near the task heading to show one status at a time.
+6. Use the payment buttons only when Stripe has been configured for the deployment. The demo offers **Starter · $9** and **Team · $29** one-time checkout options.
+
+The app remembers the sign-in token in that browser so a refresh keeps the session available. **Sign out** removes it from that browser.
+
+## How the pieces fit together
+
+This project has a web app, an API, and a database:
 
 ```mermaid
 flowchart LR
-    U[Team member's browser]
-    W[Next.js web app<br/>React UI]
-    A[Express REST API<br/>JWT auth · Zod · payment orders]
-    P[Prisma ORM]
-    D[(PostgreSQL<br/>users · teams · tasks · payment orders · Stripe event IDs)]
-    S[Stripe Checkout]
-    C[Docker Compose]
-    CI[GitHub Actions<br/>build · integration tests · coverage]
-
-    U -->|loads interface| W
-    U -->|HTTPS / JSON + bearer token| A
-    A --> P
-    P --> D
-    A -->|Create session with stable idempotency key| S
-    S -->|Signed webhook; event deduplicated| A
-    S -->|Hosted card entry| U
-    C -. runs .-> W
-    C -. runs .-> A
-    C -. runs .-> D
-    CI -. verifies .-> W
-    CI -. verifies .-> A
+    Person[You in a browser] --> Web[Next.js web app]
+    Web -->|JSON requests and sign-in token| API[Express API]
+    API --> ORM[Prisma database toolkit]
+    ORM --> DB[(PostgreSQL database)]
+    API -->|Create a hosted checkout| Stripe[Stripe]
+    Stripe -->|Signed payment event| API
 ```
 
-The browser uses the Next.js app for the interface and calls the Express API for authenticated team, task, and payment operations. The API fixes the package and amount server-side, creates an order, then asks Stripe to create a hosted Checkout Session with an idempotency key derived from that order. Stripe sends signed webhook events to the raw-body webhook route; the API verifies the signature, records each event ID once, and updates order status. The browser return URL only displays status and never marks an order paid. Card details are entered on Stripe-hosted Checkout and are not collected or stored by this app.
+- **The web app** draws the pages and sends requests when you sign in, create a team, or change a task.
+- **The API** checks requests, verifies who is signed in, applies team permissions, and performs the requested operation.
+- **PostgreSQL** keeps accounts, teams, tasks, payment orders, and processed Stripe event IDs between visits.
+- **Prisma** is the layer the API uses to work with PostgreSQL and apply database migrations.
+- **Stripe Checkout** hosts the card-entry page. The app does not collect or store card details.
 
-## Project structure
+For payments, the API chooses the package price on the server, creates an order, and asks Stripe to open checkout. After checkout, Stripe sends a signed webhook event to the API. The API verifies that signature and updates the order. Returning to the app by itself does not mark an order as paid.
 
-```text
-taskflowp/
-├── apps/
-│   ├── api/
-│   │   ├── prisma/          # Data model and PostgreSQL migrations
-│   │   ├── scripts/         # API latency benchmark
-│   │   ├── src/             # Express app and server entry point
-│   │   └── test/            # API integration tests
-│   └── web/
-│       ├── app/             # Next.js routes and interface styles
-│       └── lib/             # API client helpers
-├── legacy/                  # Original Spring Boot job-queue project
-├── .github/workflows/       # CI build and test workflow
-├── Dockerfile.api
-├── Dockerfile.web
-├── docker-compose.yml
-├── package.json             # npm workspaces and shared commands
-└── prisma.config.ts
-```
+## Technology used
 
-## Run locally
+| Part | Tools | In everyday terms |
+|---|---|---|
+| Web interface | Next.js, React, TypeScript | Builds the pages and interactive controls in your browser. |
+| API | Node.js, Express, TypeScript | Receives and handles requests from the web app. |
+| Input checks | Zod | Checks that request data has the expected shape. |
+| Sign-in | JSON Web Tokens (JWT), bcrypt password hashing | Lets the API recognize a signed-in user without storing a plain-text password. |
+| Database | PostgreSQL, Prisma | Stores the app’s data and gives the API a structured way to access it. |
+| Payments | Stripe Checkout and signed webhooks | Hosts the example checkout and reports payment outcomes to the API. |
+| Local services | Docker Compose | Starts the database, API, and web app together for development. |
+| Automated checks | GitHub Actions, Vitest | Builds the app and runs API integration tests in CI. |
 
-Requirements: Node.js 22+, npm, and Docker Compose.
+## Run the project on your computer
+
+### What you need
+
+- **Git**, to download the source code.
+- **Docker Desktop** (or a compatible Docker Engine with Compose), to run the database and app containers.
+- An internet connection the first time, so Docker can download the required images.
+
+The Docker route is the easiest way to get started; you do not need to install Node.js separately for this route.
+
+### 1. Download the source
+
+Open Terminal (macOS/Linux) or PowerShell (Windows), then run:
 
 ```bash
-git clone https://github.com/rithika20252024/taskflowp
+git clone https://github.com/rithika20252024/taskflowp.git
 cd taskflowp
+```
+
+### 2. Create the local settings file
+
+Copy the example settings file:
+
+```bash
 cp apps/api/.env.example .env
-# Set JWT_SECRET and Stripe settings as described below.
+```
+
+On Windows PowerShell, use:
+
+```powershell
+Copy-Item apps/api/.env.example .env
+```
+
+For a local-only demo, Docker Compose has local development defaults for the database and login secret. You can start without Stripe keys; the team and task parts can still run, while checkout will need Stripe configured. For a safer local secret, replace the `JWT_SECRET` value in `.env` with a long, random string. Never reuse a production secret here.
+
+### 3. Start the app
+
+Make sure Docker Desktop is running, then from the repository folder run:
+
+```bash
 docker compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The API health endpoint is [http://localhost:4000/health](http://localhost:4000/health). Compose starts PostgreSQL, applies the Prisma migration, then starts the API and web app.
+The first start can take a few minutes while images are downloaded and built. Compose starts PostgreSQL, waits for it to be ready, applies the database migration, and then starts the API and web app.
 
-### Deploy to Vercel
+### 4. Open it
 
-This repository uses Vercel Services to deploy the Next.js site and Express API behind one domain. In Vercel, import the repository, set the project framework preset to **Services**, and keep the root directory at the repository root. The service definitions and `/api/*` and `/health` routes are in `vercel.json`. Vercel Services must be enabled for the project.
+- Web app: [http://localhost:3000](http://localhost:3000)
+- API health check: [http://localhost:4000/health](http://localhost:4000/health)
 
-Create a managed PostgreSQL database and add these environment variables to the Vercel project for Production and Preview deployments:
+The health check should return a small JSON response indicating that the API is running. Create an account in the web app, create a team, and add a task.
 
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string from your provider. Use its pooled connection URL for serverless deployments when available. |
-| `JWT_SECRET` | A unique random value of at least 32 characters; generate one with `openssl rand -base64 48`. |
-| `APP_URL` | The public HTTPS URL for the deployed web app, such as `https://taskflowp.vercel.app`. |
-| `CORS_ORIGIN` | The exact web origin, such as `https://taskflowp.vercel.app`; add comma-separated origins only when you use multiple domains. |
-| `STRIPE_SECRET_KEY` | Optional for teams and tasks. Use a Stripe `sk_test_...` key for test checkout or `sk_live_...` for real payments. |
-| `STRIPE_WEBHOOK_SECRET` | The signing secret for the corresponding Stripe webhook endpoint. Checkout requires both Stripe values. |
+To stop the containers, press **Ctrl+C** in the terminal. To start them again later, run `docker compose up` from the project folder. To stop and remove the containers while keeping the database volume, run `docker compose down`.
 
-Leave `NEXT_PUBLIC_API_URL` unset when the web app and API share the Vercel domain; the configured rewrites route API calls to the Express service. Apply database migrations before deploying a schema change:
+### Run the web and API directly with Node.js (optional)
 
-```bash
-DATABASE_URL='your-production-database-url' npm run db:deploy --workspace @taskflow/api
-```
+Use this approach if you want to work on the code without building the web and API containers. It still uses Docker for PostgreSQL.
 
-For live payments, create a Stripe webhook at `https://your-domain/api/payments/webhook` and subscribe to `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, and `checkout.session.async_payment_failed`. Copy the endpoint's signing secret into `STRIPE_WEBHOOK_SECRET`. Add all credentials through Vercel's Environment Variables settings; do not commit them or paste them into this repository.
-
-For local development with Node.js on your host, first make sure Docker Desktop is running. From the repository root, install the pinned dependencies, start PostgreSQL, and prepare the database:
+Install **Node.js 22 or newer** and npm, then run from the repository root:
 
 ```bash
 cp apps/api/.env.example .env
@@ -109,51 +156,116 @@ npm run db:generate --workspace @taskflow/api
 npm run dev
 ```
 
-The API reads `DATABASE_URL` and `JWT_SECRET` from the root `.env` file. Copy `apps/api/.env.example` to `.env` before starting the app and replace `JWT_SECRET` with a random secret of at least 32 characters. Run `npm install` before using Prisma or starting the app; this ensures the project's pinned Prisma CLI and `concurrently` are available. Avoid invoking Prisma through `npx` before installing dependencies, since npm may fetch a different version.
+On Windows PowerShell, replace the `cp` line with `Copy-Item apps/api/.env.example .env`. The `npm run dev` command starts the API and web development servers together. The web page is at `http://localhost:3000`; the API is at `http://localhost:4000`.
 
-### Try Stripe Checkout locally
+## Environment settings
 
-1. Create or use a Stripe account in **test mode** and put its `sk_test_...` secret key in `.env` as `STRIPE_SECRET_KEY`. Never place a Stripe secret key in browser code or a `NEXT_PUBLIC_*` variable.
-2. Install and authenticate the [Stripe CLI](https://docs.stripe.com/stripe-cli), then run `stripe listen --forward-to localhost:4000/api/payments/webhook`. Copy its printed `whsec_...` signing secret into `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the API. Set `APP_URL=http://localhost:3000` for local use.
-3. Sign in to TaskFlow Pro and use the **Starter · $9** or **Team · $29** checkout buttons. Prices are fixed by the API; the browser cannot submit a different amount.
-4. Complete Checkout with Stripe's test card `4242 4242 4242 4242`, any future expiry, any three-digit CVC, and any postal code. Return to the app and wait for the signed webhook to confirm the order.
+Environment variables are configuration values supplied to the app when it runs. The local template is [`apps/api/.env.example`](apps/api/.env.example). Keep real values in your local `.env` or your hosting provider’s settings; **do not commit secrets to GitHub**.
 
-The webhook verifies Stripe's signature against the raw request body. Payment events are deduplicated by Stripe event ID, while order creation uses user-scoped and Stripe API idempotency keys. Duplicate or delayed delivery is expected; production systems also need reconciliation for missed webhooks and a more complete ledger. This project does not implement subscriptions or claim production payment volume.
-
-## API overview
-
-All team/task routes require `Authorization: Bearer <token>`. Users can register or log in at `/api/auth/register` and `/api/auth/login`. The user who creates a team becomes its `OWNER`; owners and admins can add registered users to the team. Team membership is checked before task access, and task queries are scoped to the selected team.
-
-| Method | Endpoint | Purpose |
+| Name | Needed for | What it means |
 |---|---|---|
-| POST | `/api/auth/register` | Create an account |
-| POST | `/api/auth/login` | Return a signed JWT |
-| POST | `/api/payments/checkout` | Create a server-priced Checkout Session; requires bearer token and `Idempotency-Key` |
-| GET | `/api/payments` | List the authenticated user's recent orders |
-| GET | `/api/payments/:orderId` | Read an order status for its owner |
-| POST | `/api/payments/webhook` | Verify and process Stripe-signed Checkout events; no user JWT |
-| GET / POST | `/api/teams` | List memberships / create a team |
-| POST | `/api/teams/:teamId/members` | Add a team member (owner/admin) |
-| GET / POST | `/api/teams/:teamId/tasks` | Filter and page through tasks / create a task |
-| GET / PATCH / DELETE | `/api/teams/:teamId/tasks/:taskId` | Read, update, or remove a task |
+| `DATABASE_URL` | API and database | PostgreSQL connection address. The Docker setup uses its own internal database address. |
+| `JWT_SECRET` | Sign-in | Private random string the API uses to sign login tokens. Use at least 32 characters and keep it secret. |
+| `PORT` | API | Port the API listens on; local default is `4000`. |
+| `CORS_ORIGIN` | Browser/API connection | The web app’s allowed origin, usually `http://localhost:3000` locally. |
+| `APP_URL` | Checkout return links | Public address of the web app, usually `http://localhost:3000` locally. |
+| `STRIPE_SECRET_KEY` | Checkout | Secret key from Stripe. Use a test key (`sk_test_...`) while learning. |
+| `STRIPE_WEBHOOK_SECRET` | Checkout result updates | Signing secret for the Stripe webhook endpoint. For local use, Stripe CLI prints a `whsec_...` value. |
+| `NEXT_PUBLIC_API_URL` | Optional web configuration | API base address when the web app and API do not share a domain. Leave unset for the Vercel single-domain routing in this project. |
 
-Task listing supports `page` (1-based), `limit` (1–100), `status`, `priority`, `sort` (`createdAt`, `updatedAt`, `dueDate`, `priority`, or `title`), and `order` (`asc` or `desc`). For example:
+Never put a Stripe secret key in frontend code or in a variable whose name starts with `NEXT_PUBLIC_`. Variables with that prefix may be included in browser code.
 
-```bash
-curl 'http://localhost:4000/api/teams/TEAM_ID/tasks?status=TODO&priority=HIGH&page=1&limit=20&sort=createdAt&order=desc' -H 'Authorization: Bearer YOUR_TOKEN'
+## Try the Stripe test checkout
+
+Payments are optional. To try them, use Stripe **test mode** and never a live key for a learning run.
+
+1. Create or use a Stripe account and copy a test secret key beginning with `sk_test_` into `.env` as `STRIPE_SECRET_KEY`.
+2. Install and authenticate the [Stripe CLI](https://docs.stripe.com/stripe-cli). In another terminal, start webhook forwarding:
+
+   ```bash
+   stripe listen --forward-to localhost:4000/api/payments/webhook
+   ```
+
+3. The CLI prints a webhook signing secret beginning with `whsec_`. Put it in `.env` as `STRIPE_WEBHOOK_SECRET`, set `APP_URL=http://localhost:3000`, and restart the API/container so it reads the new values.
+4. Sign in to the local app and choose **Starter · $9** or **Team · $29**. The API sets the prices; the browser cannot choose a different amount.
+5. On Stripe’s hosted test checkout page, use test card `4242 4242 4242 4242`, any future expiry date, any three-digit CVC, and any postal code.
+6. Return to TaskFlow Pro. The app checks order status until the verified webhook updates it.
+
+These are one-time checkout examples; subscriptions are not implemented. Stripe test mode does not charge real money. Do not use production payment credentials for benchmarks or local experiments.
+
+## API guide
+
+An API is how the web page and other programs ask the server to do work. Most team, task, and payment endpoints require a sign-in token in this HTTP header:
+
+```text
+Authorization: Bearer YOUR_TOKEN
 ```
 
-The API validates request bodies and query parameters and returns structured 400 validation errors, 401 authentication errors, 403 role errors, and 404 team/task errors. Passwords are stored as bcrypt hashes. Production deployments must supply a unique, random `JWT_SECRET` and a managed PostgreSQL database.
+The register and login endpoints return the token. In the browser, the web app manages it for you.
 
-## Checks
+| Method | Address | What it does |
+|---|---|---|
+| `GET` | `/health` | Checks whether the API is running. |
+| `POST` | `/api/auth/register` | Creates an account. |
+| `POST` | `/api/auth/login` | Signs in and returns a token. |
+| `GET` | `/api/auth/me` | Returns the current signed-in user. |
+| `GET` / `POST` | `/api/teams` | Lists your teams / creates a team. |
+| `POST` | `/api/teams/:teamId/members` | Adds a registered user (owner/admin only). |
+| `GET` / `POST` | `/api/teams/:teamId/tasks` | Lists / creates tasks in a team. |
+| `GET` / `PATCH` / `DELETE` | `/api/teams/:teamId/tasks/:taskId` | Reads / updates / removes a task. |
+| `POST` | `/api/payments/checkout` | Creates a server-priced Stripe Checkout Session. Requires an `Idempotency-Key` header as well as the sign-in token. |
+| `GET` | `/api/payments` | Lists the signed-in user’s recent payment orders. |
+| `GET` | `/api/payments/:orderId` | Gets an order’s status for its owner. |
+| `POST` | `/api/payments/webhook` | Receives and verifies Stripe events. Stripe calls this endpoint; it does not use a user token. |
+
+Task lists can be filtered by `status` and `priority`, and paginated with `page` and `limit`. They can be sorted by `createdAt`, `updatedAt`, `dueDate`, `priority`, or `title`, with `asc` or `desc` ordering. For example:
+
+```bash
+curl 'http://localhost:4000/api/teams/TEAM_ID/tasks?status=TODO&priority=HIGH&page=1&limit=20&sort=createdAt&order=desc' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+Replace `TEAM_ID` and `YOUR_TOKEN` with values from your own local account. API validation errors use HTTP 400, missing/invalid login uses 401, insufficient team permissions uses 403, and missing team/task resources use 404.
+
+## Deploy to Vercel
+
+This repository is configured to run the Next.js web app and Express API as Vercel Services on one domain. You also need a managed PostgreSQL database. Vercel Services must be enabled for your Vercel account/project.
+
+1. Import `rithika20252024/taskflowp` into Vercel.
+2. Select the **Services** framework preset and keep the project root directory at the repository root. The service definitions and route rewrites are in [`vercel.json`](vercel.json).
+3. Create or connect a PostgreSQL database. Use the provider’s pooled connection string if it recommends one for serverless services.
+4. In the Vercel project’s environment variable settings, add the following for the environments you use:
+
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | Your managed PostgreSQL connection string. |
+   | `JWT_SECRET` | A new, random secret of at least 32 characters. Generate one with `openssl rand -base64 48`. |
+   | `APP_URL` | The deployed app’s HTTPS URL. |
+   | `CORS_ORIGIN` | The exact deployed web origin, including `https://`. |
+   | `STRIPE_SECRET_KEY` | Optional for teams/tasks. Add a Stripe test key to enable test checkout. |
+   | `STRIPE_WEBHOOK_SECRET` | Optional for teams/tasks. Required for processing Stripe checkout events. |
+
+5. Deploy. When changing the database schema, apply migrations before the app depends on the new schema:
+
+   ```bash
+   DATABASE_URL='your-production-database-url' npm run db:deploy --workspace @taskflow/api
+   ```
+
+6. To accept real payments, configure Stripe live credentials and a Stripe webhook at `https://YOUR_DOMAIN/api/payments/webhook`. Subscribe it to `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, and `checkout.session.async_payment_failed`, then save the endpoint’s signing secret as `STRIPE_WEBHOOK_SECRET`.
+
+Add credentials only through Vercel’s Environment Variables settings. Do not put them in source files, commit them, or paste them into an issue or chat. Live payments require live Stripe credentials and a matching webhook signing secret.
+
+## Build and test
+
+Install dependencies and build both apps:
 
 ```bash
 npm ci
-npx prisma generate --config=prisma.config.ts
+npm run db:generate --workspace @taskflow/api
 npm run build
 ```
 
-API integration tests use a separate PostgreSQL database and clean their tables between cases. With Docker Desktop running, create and migrate that database once:
+API integration tests use a separate PostgreSQL database, so they do not reuse your normal local database. With Docker running, create and migrate it once:
 
 ```bash
 docker compose up -d db
@@ -161,38 +273,76 @@ docker compose exec db createdb -U taskflow taskflow_test
 DATABASE_URL='postgresql://taskflow:taskflow@localhost:5432/taskflow_test?schema=public' npm run db:deploy --workspace @taskflow/api
 ```
 
-If `createdb` reports that `taskflow_test` already exists, continue. Run the tests with:
+If `createdb` says the database already exists, continue. Run the tests with:
 
 ```bash
-DATABASE_URL='postgresql://taskflow:taskflow@localhost:5432/taskflow_test?schema=public' JWT_SECRET='integration-test-secret-at-least-32-characters-long' npm test
+DATABASE_URL='postgresql://taskflow:taskflow@localhost:5432/taskflow_test?schema=public' \
+JWT_SECRET='integration-test-secret-at-least-32-characters-long' \
+npm test
 ```
 
-Vitest prints the V8 coverage summary in the terminal and writes detailed reports under `apps/api/coverage/`.
+The test command runs the API’s Vitest integration suite and writes coverage output under `apps/api/coverage/`. GitHub Actions also provisions PostgreSQL, builds the web and API apps, runs the API tests, and collects coverage.
 
-The CI workflow provisions PostgreSQL, applies migrations, builds both apps, runs the integration suite, and collects an API coverage report.
+## Project folder guide
 
-## Resume-ready summary
-
-Use claims that match the implementation and the results you measure:
-
-- Integrated Stripe Checkout into a full-stack TypeScript app, persisting server-priced orders and reconciling status from signature-verified, deduplicated webhook events.
-- Made checkout retries safe with user-scoped idempotency keys and stable Stripe request keys; kept card entry on Stripe-hosted Checkout.
-- Built team/task APIs with JWT auth, role checks, PostgreSQL, Prisma, and validated filtering and pagination.
-
-Do not claim production scale, payment volume, or a latency improvement until you have measured it. The API logs per-request duration in milliseconds without logging credentials or payment data. The existing benchmark samples the authenticated task-list route, not Stripe's external Checkout API; its p50/p95/p99 describe your local API and database only. Stripe latency varies with network and service conditions. Record separate Checkout call timings only after a repeatable test-mode sample, and report sample size, concurrency, and environment with the result.
-
-To collect task API latency percentiles, start the app, register and log in a user through `/api/auth/register` and `/api/auth/login`, then create a team with `POST /api/teams` using that user's bearer token. Use the returned JWT and team ID:
-
-```bash
-TEAM_ID='your-team-id' TASKFLOW_TOKEN='your-jwt' npm --workspace @taskflow/api run benchmark
+```text
+taskflowp/
+├── apps/
+│   ├── api/
+│   │   ├── prisma/           Database schema and migrations
+│   │   ├── scripts/          Optional API benchmark scripts
+│   │   ├── src/               Express API and server entry point
+│   │   └── test/              API integration tests
+│   └── web/
+│       ├── app/               Next.js pages and styles
+│       └── lib/               Browser-side API helpers and types
+├── legacy/                    Earlier Spring Boot job-queue project
+├── .github/workflows/          Automated GitHub Actions checks
+├── Dockerfile.api              Instructions for building the API container
+├── Dockerfile.web              Instructions for building the web container
+├── docker-compose.yml          Local database, API, and web setup
+├── prisma.config.ts            Prisma configuration
+├── package.json                Shared commands and npm workspace setup
+└── vercel.json                 Vercel Services and route configuration
 ```
 
-The benchmark reports median, p95, and p99 response times in milliseconds for 100 requests at concurrency 10 by default. Use the measured values from your own run when writing resume claims; results depend on the machine and environment.
+The current TaskFlow Pro app lives under `apps/`. The `legacy/` folder contains an earlier Spring Boot job-queue project and is not the web application described in the main sections above.
 
-The payment benchmark creates real Checkout Sessions in Stripe **test mode** (it makes no charges), so it is opt-in and bounded to 100 requests / concurrency 10. Use a separate test-mode deployment, a fresh API token, and its session URL only for timing; do not point it at a live-key environment:
+## Troubleshooting
 
-```bash
-STRIPE_TEST_MODE_ACK=true TASKFLOW_TOKEN='your-jwt' REQUESTS=20 CONCURRENCY=4 npm --workspace @taskflow/api run benchmark:payments
-```
+| Problem | Things to check |
+|---|---|
+| `localhost:3000` does not open | Make sure Docker is running and `docker compose up --build` finished without an error. |
+| Database connection or migration error | Check that the `db` container is healthy. If you edited `.env`, restart the services so they load the new settings. |
+| Sign-in says the account is unknown | Create the account first using **Create an account**, then sign in with the same email and password. |
+| Team list is empty | Create a team with **New team**. A task belongs to a team, so create/select a team before adding tasks. |
+| Checkout says Stripe is not configured | Add a Stripe test secret key and a webhook signing secret to `.env`, then restart the API. Checkout is optional for task management. |
+| Checkout returns but stays pending | Make sure `stripe listen` is still running, its printed `whsec_...` value matches `STRIPE_WEBHOOK_SECRET`, and the API was restarted after changing `.env`. |
+| Port 3000, 4000, or 5432 is already in use | Stop the other application using that port, or change the port mapping in `docker-compose.yml`. |
 
-It reports p50, p95, and p99 for the full authenticated checkout endpoint, including the external Stripe API request and database work. The samples also create pending test orders and unpaid test Checkout Sessions. Report your actual run parameters and results; do not describe this as production traffic or claim an improvement without a measured before/after change.
+## Security notes and current scope
+
+- Passwords are stored as bcrypt hashes, not as readable passwords.
+- Team membership and permissions are checked by the API, not just by the browser interface.
+- Checkout prices are selected by the API. The browser does not submit an amount.
+- Card details are entered on Stripe-hosted Checkout and are not collected or stored by TaskFlow Pro.
+- Stripe webhook signatures are verified, and event IDs are recorded to avoid processing the same event more than once.
+- Local default secrets are for local development only. Use unique secrets and managed database credentials for a deployed environment.
+- The payment feature demonstrates one-time checkout and webhook handling. It does not implement subscriptions, a complete accounting ledger, or payment reconciliation for missed webhooks. Treat it as a project/demo, not as evidence of a production payment operation.
+
+## Glossary
+
+| Word | Simple meaning |
+|---|---|
+| **API** | The server interface the web page calls to read or change information. |
+| **Database** | Organized storage that keeps accounts, teams, tasks, and orders after the page is closed. |
+| **Environment variable** | A setting supplied when software runs, often used for URLs or private keys. |
+| **JWT / token** | A signed proof the browser sends to the API to show which user is signed in. |
+| **Migration** | A versioned instruction for creating or changing database tables. |
+| **Webhook** | A server-to-server message, such as Stripe telling the API that a checkout completed. |
+| **Idempotency key** | A unique request label that helps prevent a retry from accidentally creating duplicate work or orders. |
+| **Docker Compose** | A tool that starts multiple related services, such as the database and app, from one command. |
+
+## License
+
+This project is released under the [MIT License](LICENSE).
