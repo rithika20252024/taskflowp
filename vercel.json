@@ -6,7 +6,10 @@
       "framework": "express",
       "entrypoint": "src/app.mts",
       "installCommand": "cd ../.. && npm ci",
-      "buildCommand": "npm run db:generate && npm run build"
+      "buildCommand": "npm run db:generate && npm run build",
+      "includeFiles": [
+        "package.json"
+      ]
     },
     "web": {
       "root": "apps/web",
