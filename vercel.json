@@ -3,11 +3,16 @@
   "services": {
     "api": {
       "root": "apps/api",
-      "framework": "express"
+      "framework": "express",
+      "entrypoint": "src/app.ts",
+      "installCommand": "cd ../.. && npm ci",
+      "buildCommand": "npm run db:generate && npm run build"
     },
     "web": {
       "root": "apps/web",
-      "framework": "nextjs"
+      "framework": "nextjs",
+      "installCommand": "cd ../.. && npm ci",
+      "buildCommand": "npm run build"
     }
   },
   "rewrites": [

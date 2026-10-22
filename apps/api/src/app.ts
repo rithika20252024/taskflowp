@@ -19,8 +19,11 @@ function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) throw new HttpError(503, 'Payments require a Stripe test-mode secret key');
   return stripeClient ??= new Stripe(process.env.STRIPE_SECRET_KEY);
 }
-const secret = process.env.JWT_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'development-only-change-this-secret-32-chars');
-if (secret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'development-only-change-this-secret-32-chars');
+  if (secret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
+  return secret;
+}
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000' }));
 app.use((_req, res, next) => {
@@ -72,7 +75,7 @@ function wrap(fn: (req: AuthRequest, res: Response, next: NextFunction) => Promi
 const auth = (req: AuthRequest, res: Response, next: NextFunction) => {
   const token = req.header('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
-  try { req.userId = (jwt.verify(token, secret) as jwt.JwtPayload).sub; next(); }
+  try { req.userId = (jwt.verify(token, getJwtSecret()) as jwt.JwtPayload).sub; next(); }
   catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
 };
 const idParam = z.string().min(1).max(64);
@@ -87,14 +90,14 @@ app.post('/api/auth/register', wrap(async (req, res) => {
   const data = registerSchema.parse(req.body);
   const passwordHash = await bcrypt.hash(data.password, 12);
   const user = await prisma.user.create({ data: { email: data.email.toLowerCase(), name: data.name, passwordHash }, select: { id: true, email: true, name: true } });
-  const token = jwt.sign({}, secret, { subject: user.id, expiresIn: '12h' });
+  const token = jwt.sign({}, getJwtSecret(), { subject: user.id, expiresIn: '12h' });
   res.status(201).json({ user, token });
 }));
 app.post('/api/auth/login', wrap(async (req, res) => {
   const data = credentialsSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
   if (!user || !(await bcrypt.compare(data.password, user.passwordHash))) return res.status(401).json({ error: 'Invalid email or password' });
-  const token = jwt.sign({}, secret, { subject: user.id, expiresIn: '12h' });
+  const token = jwt.sign({}, getJwtSecret(), { subject: user.id, expiresIn: '12h' });
   res.json({ user: { id: user.id, email: user.email, name: user.name }, token });
 }));
 app.get('/api/auth/me', auth, wrap(async (req, res) => {
