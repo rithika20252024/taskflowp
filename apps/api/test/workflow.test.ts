@@ -18,6 +18,22 @@ describe('team task API', () => {
     expect((await request(server).post('/api/auth/register').send({ email: 'bad', name: '', password: 'short' })).status).toBe(400);
   });
 
+  it('authenticates registered users and returns their own profile', async () => {
+    await register('login@example.com');
+    expect((await request(server).post('/api/auth/login').send({ email: 'missing@example.com', password: 'secure-passphrase-123' })).status).toBe(401);
+    expect((await request(server).post('/api/auth/login').send({ email: 'login@example.com', password: 'incorrect-passphrase' })).status).toBe(401);
+
+    const login = await request(server).post('/api/auth/login').send({ email: 'LOGIN@example.com', password: 'secure-passphrase-123' });
+    expect(login.status).toBe(200);
+    expect((await request(server).get('/api/auth/me').set('Authorization', `Bearer ${login.body.token}`)).body.user.email).toBe('login@example.com');
+  });
+
+  it('rejects duplicate accounts and malformed JSON with client errors', async () => {
+    await register('duplicate@example.com');
+    expect((await request(server).post('/api/auth/register').send({ email: 'duplicate@example.com', name: 'Duplicate', password: 'secure-passphrase-123' })).status).toBe(409);
+    expect((await request(server).post('/api/auth/login').set('Content-Type', 'application/json').send('{')).status).toBe(400);
+  });
+
   it('creates a team and enforces team-scoped roles for task CRUD', async () => {
     const ownerToken = await register('owner@example.com');
     const memberToken = await register('member@example.com');

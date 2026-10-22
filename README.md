@@ -1,6 +1,6 @@
 # TaskFlow Pro — Payment Workflow Demo
 
-TaskFlow Pro is a team task-management app with an end-to-end Stripe Checkout workflow. The demo uses Stripe-hosted test-mode checkout for fixed-price one-time purchases, stores order state in PostgreSQL, and treats verified webhooks as the source of truth for payment completion. It is a portfolio project, not a production billing platform.
+TaskFlow Pro is a team task-management app with an end-to-end Stripe Checkout workflow. It uses Stripe-hosted checkout for fixed-price one-time purchases, stores order state in PostgreSQL, and treats verified webhooks as the source of truth for payment completion. The API accepts Stripe test and live secret keys; live payments stay disabled until live credentials and a webhook signing secret are configured.
 
 ## Stack
 
@@ -75,6 +75,29 @@ docker compose up --build
 
 Open [http://localhost:3000](http://localhost:3000). The API health endpoint is [http://localhost:4000/health](http://localhost:4000/health). Compose starts PostgreSQL, applies the Prisma migration, then starts the API and web app.
 
+### Deploy to Vercel
+
+This repository uses Vercel Services to deploy the Next.js site and Express API behind one domain. In Vercel, import the repository, set the project framework preset to **Services**, and keep the root directory at the repository root. The service definitions and `/api/*` and `/health` routes are in `vercel.json`. Vercel Services must be enabled for the project.
+
+Create a managed PostgreSQL database and add these environment variables to the Vercel project for Production and Preview deployments:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string from your provider. Use its pooled connection URL for serverless deployments when available. |
+| `JWT_SECRET` | A unique random value of at least 32 characters; generate one with `openssl rand -base64 48`. |
+| `APP_URL` | The public HTTPS URL for the deployed web app, such as `https://taskflowp.vercel.app`. |
+| `CORS_ORIGIN` | The exact web origin, such as `https://taskflowp.vercel.app`; add comma-separated origins only when you use multiple domains. |
+| `STRIPE_SECRET_KEY` | Optional for teams and tasks. Use a Stripe `sk_test_...` key for test checkout or `sk_live_...` for real payments. |
+| `STRIPE_WEBHOOK_SECRET` | The signing secret for the corresponding Stripe webhook endpoint. Checkout requires both Stripe values. |
+
+Leave `NEXT_PUBLIC_API_URL` unset when the web app and API share the Vercel domain; the configured rewrites route API calls to the Express service. Apply database migrations before deploying a schema change:
+
+```bash
+DATABASE_URL='your-production-database-url' npm run db:deploy --workspace @taskflow/api
+```
+
+For live payments, create a Stripe webhook at `https://your-domain/api/payments/webhook` and subscribe to `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, and `checkout.session.async_payment_failed`. Copy the endpoint's signing secret into `STRIPE_WEBHOOK_SECRET`. Add all credentials through Vercel's Environment Variables settings; do not commit them or paste them into this repository.
+
 For local development with Node.js on your host, first make sure Docker Desktop is running. From the repository root, install the pinned dependencies, start PostgreSQL, and prepare the database:
 
 ```bash
@@ -125,7 +148,7 @@ The API validates request bodies and query parameters and returns structured 400
 ## Checks
 
 ```bash
-npm install
+npm ci
 npx prisma generate --config=prisma.config.ts
 npm run build
 ```
