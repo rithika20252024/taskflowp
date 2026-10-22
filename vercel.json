@@ -4,12 +4,9 @@
     "api": {
       "root": "apps/api",
       "framework": "express",
-      "entrypoint": "src/app.mts",
+      "entrypoint": "src/app.mjs",
       "installCommand": "cd ../.. && npm ci",
-      "buildCommand": "npm run db:generate && npm run build",
-      "includeFiles": [
-        "package.json"
-      ]
+      "buildCommand": "npm run db:generate && npm run build"
     },
     "web": {
       "root": "apps/web",
