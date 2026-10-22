@@ -1,4 +1,14 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { resolve } from 'node:path';
+
+// Neon CLI writes branch credentials to the repository-root .env.local.
+// API scripts run from either the repo root or this workspace directory.
+dotenv.config({ path: [
+  resolve(process.cwd(), '.env.local'),
+  resolve(process.cwd(), '../../.env.local'),
+  resolve(process.cwd(), '.env'),
+  resolve(process.cwd(), '../../.env'),
+] });
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -9,15 +19,25 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { z, ZodError } from 'zod';
 import Stripe from 'stripe';
 
-const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://taskflow:taskflow@localhost:5432/taskflow?schema=public';
+const databaseUrl = process.env.DATABASE_URL ?? (process.env.NODE_ENV === 'production' ? '' : 'postgresql://taskflow:taskflow@localhost:5432/taskflow?schema=public');
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim()).filter(Boolean);
+if (process.env.NODE_ENV === 'production') {
+  if (!databaseUrl) throw new Error('DATABASE_URL must be configured in production');
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters in production');
+  if (!process.env.APP_URL || !process.env.APP_URL.startsWith('https://')) throw new Error('APP_URL must be an HTTPS URL in production');
+  if (!allowedOrigins?.length) throw new Error('CORS_ORIGIN must contain the deployed web origin in production');
+}
 export const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
 const app = express();
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 const appUrl = (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 let stripeClient: Stripe | undefined;
+const stripeSecretKey = () => process.env.STRIPE_SECRET_KEY ?? '';
+const hasStripeSecretKey = () => /^sk_(test|live)_/.test(stripeSecretKey());
 function getStripe() {
-  if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) throw new HttpError(503, 'Payments require a Stripe test-mode secret key');
-  return stripeClient ??= new Stripe(process.env.STRIPE_SECRET_KEY);
+  if (!hasStripeSecretKey()) throw new HttpError(503, 'Payments require a valid Stripe secret key');
+  if (!process.env.STRIPE_WEBHOOK_SECRET) throw new HttpError(503, 'Payments require a configured Stripe webhook signing secret');
+  return stripeClient ??= new Stripe(stripeSecretKey());
 }
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'development-only-change-this-secret-32-chars');
@@ -25,7 +45,7 @@ function getJwtSecret() {
   return secret;
 }
 app.use(helmet());
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000' }));
+app.use(cors({ origin: allowedOrigins ?? ['http://localhost:3000'] }));
 app.use((_req, res, next) => {
   const startedAt = process.hrtime.bigint();
   res.on('finish', () => {
@@ -38,7 +58,7 @@ app.use((_req, res, next) => {
 app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '256kb' }), wrap(async (req, res) => {
   const signature = req.header('stripe-signature');
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) { res.status(503).json({ error: 'Webhook processing requires a Stripe test-mode secret key' }); return; }
+  if (!hasStripeSecretKey()) { res.status(503).json({ error: 'Webhook processing requires a valid Stripe secret key' }); return; }
   if (!webhookSecret) { res.status(503).json({ error: 'Webhook processing is not configured' }); return; }
   if (!signature) { res.status(400).json({ error: 'Webhook signature is missing' }); return; }
   let event: Stripe.Event;
@@ -85,7 +105,10 @@ const credentialsSchema = z.object({ email: z.string().email(), password: z.stri
 const taskCreateSchema = z.object({ title: z.string().trim().min(1).max(160), description: z.string().max(4000).optional(), priority: z.nativeEnum(TaskPriority).default('MEDIUM'), dueDate: z.string().datetime().optional() });
 const taskPatchSchema = taskCreateSchema.partial().extend({ status: z.nativeEnum(TaskStatus).optional() });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', wrap(async (_req, res) => {
+  await prisma.$queryRaw`SELECT 1`;
+  res.json({ status: 'ok' });
+}));
 app.post('/api/auth/register', wrap(async (req, res) => {
   const data = registerSchema.parse(req.body);
   const passwordHash = await bcrypt.hash(data.password, 12);
@@ -221,6 +244,7 @@ app.delete('/api/teams/:teamId/tasks/:taskId', auth, wrap(async (req, res) => {
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
   if (err instanceof ZodError) return res.status(400).json({ error: 'Validation failed', details: err.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
+  if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ error: 'Invalid JSON request body' });
   if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return res.status(409).json({ error: 'A record with that value already exists' });
   console.error(JSON.stringify({ event: 'request_error', errorType: err instanceof Error ? err.name : 'UnknownError' }));
   res.status(500).json({ error: 'Internal server error' });
