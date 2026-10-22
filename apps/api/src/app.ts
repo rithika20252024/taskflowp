@@ -1,4 +1,14 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { resolve } from 'node:path';
+
+// Neon CLI writes branch credentials to the repository-root .env.local.
+// API scripts run from either the repo root or this workspace directory.
+dotenv.config({ path: [
+  resolve(process.cwd(), '.env.local'),
+  resolve(process.cwd(), '../../.env.local'),
+  resolve(process.cwd(), '.env'),
+  resolve(process.cwd(), '../../.env'),
+] });
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

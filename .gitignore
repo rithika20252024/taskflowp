@@ -12,3 +12,4 @@ target/
 *.iml
 .classpath
 .project
+.neon
